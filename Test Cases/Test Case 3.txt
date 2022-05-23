@@ -1,0 +1,9 @@
+add x0,x0,x0
+ADDI x9,x0,4
+addi x1,x0,1
+addi x3,x0,1
+l2:add x1,x0,x1
+sw x1,0(x0)
+lw x2,0(x0)
+sub x9,x9,x3
+bne x9,x30,l2
