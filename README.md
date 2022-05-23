@@ -10,4 +10,4 @@ This program supports only simulations and is not Test to work on the FPGA board
 ### Test Cases
 Test cases to test several programs can be found in the file called Test Cases.
 
-This project was part of the requirements for Computer Architecture course at AUC
+###### This project was part of the requirements for Computer Architecture course at AUC
