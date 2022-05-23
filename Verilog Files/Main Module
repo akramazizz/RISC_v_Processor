@@ -1,0 +1,341 @@
+
+
+
+
+`define     IR_rs1          19:15
+`define     IR_rs2          24:20
+`define     IR_rd           11:7
+`define     IR_opcode       6:2
+`define     IR_funct3       14:12
+`define     IR_funct7       31:25
+`define     IR_shamt        24:20
+
+`define     OPCODE_Branch   5'b11_000
+`define     OPCODE_Load     5'b00_000
+`define     OPCODE_Store    5'b01_000
+`define     OPCODE_JALR     5'b11_001
+`define     OPCODE_JAL      5'b11_011
+`define     OPCODE_Arith_I  5'b00_100
+`define     OPCODE_Arith_R  5'b01_100
+`define     OPCODE_AUIPC    5'b00_101
+`define     OPCODE_LUI      5'b01_101
+`define     OPCODE_SYSTEM   5'b11_100 
+`define     OPCODE_Custom   5'b10_001
+
+`define     F3_ADD          3'b000
+`define     F3_SLL          3'b001
+`define     F3_SLT          3'b010
+`define     F3_SLTU         3'b011
+`define     F3_XOR          3'b100
+`define     F3_SRL          3'b101
+`define     F3_OR           3'b110
+`define     F3_AND          3'b111
+
+`define     BR_BEQ          3'b000
+`define     BR_BNE          3'b001
+`define     BR_BLT          3'b100
+`define     BR_BGE          3'b101
+`define     BR_BLTU         3'b110
+`define     BR_BGEU         3'b111
+
+`define     OPCODE          IR[`IR_opcode]
+
+`define     ALU_ADD         4'b00_00
+`define     ALU_SUB         4'b00_01
+`define     ALU_PASS        4'b00_11
+`define     ALU_OR          4'b01_00
+`define     ALU_AND         4'b01_01
+`define     ALU_XOR         4'b01_11
+`define     ALU_SRL         4'b10_00
+`define     ALU_SRA         4'b10_10
+`define     ALU_SLL         4'b10_01
+`define     ALU_SLT         4'b11_01
+`define     ALU_SLTU        4'b11_11
+
+`define     SYS_EC_EB       3'b000
+
+
+
+
+
+
+
+
+
+
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 03/08/2022 04:03:24 PM
+// Design Name: 
+// Module Name: RISC-V
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+module RISC_V(      input clk, 
+                    rst
+                    );
+
+//these are just temp variables to glue our modules together
+wire [31:0] addr;
+wire [31:0] data_out;
+wire [4:0] read_reg_first, read_reg_second, write_reg;
+wire[31:0] read_data_second, read_data_first;
+//this will be initialized by 0, but will be updated by the write value based on the instruction.
+wire [31:0] write_data; 
+wire [31:0] write_temp_1, write_temp_2;
+wire [31:0] j_data, auipc_data;
+wire [4:0] control_signal;
+ 
+//output for control unit
+wire Branch, MemRead;
+wire [1:0] MemtoReg;
+wire [2:0] ALUOp;
+wire MemWrite, ALUSrc, RegWrite;
+wire Halt,Pc_mux,j_sel,auipc_signal;
+
+//output for ALU unit
+wire [3:0] alu_ctr_out;
+wire [2:0] Inst_1;
+wire Inst_2;
+//immediate generator output
+ wire [31:0] gen_out;
+ //alu_2nd_mux
+  wire[31:0] ALU_second_input;
+ //ALU output
+ wire[31:0] ALU_Output;
+ wire zero_flag;
+ wire carry_flag, overflow_flag, sign_flag;
+  wire [4:0]  shamt;
+  wire [3:0] funct;
+  
+ 
+ ///branch CU
+ wire branch_flag;
+ 
+ 
+ //Memory Data Output
+ wire [31:0] mem_data_out;
+ 
+ //target address
+ wire [31:0] shifted_imm_address;
+ wire [31:0] target_address;
+ wire Cout_target;
+ 
+ 
+ wire [31:0] jalr_address, jal_address, mux_1_address;
+ //Next address
+ wire [31:0] Next_address;
+  wire [31:0] addr_4;
+ wire and_out;
+  wire Cout_4;
+  wire dum;
+  wire dum_1;
+ //in case of ledsel 10
+ 
+ //forward unit 
+  wire [1:0] forwardA, forwardB;
+  wire [31:0] temp;
+  wire [31:0] fowardA_result, forwardB_result;
+ 
+ //hazard unit
+   wire stall;
+   wire[13:0] Hazard_control;
+ //flushing instruction
+    wire [31:0] fetched_inst;
+    wire flush_decode;
+    //wire [12:0] flush_control;
+ 
+ //single memory
+ wire neg_clk= ~clk;
+ wire [7:0] memory_address;
+ 
+ 
+  //handeling auipc data
+  wire [31:0]data_for_ex_mem;
+  
+  //handeling fence and ecall
+ wire [31:0] fetched_inst_up;
+ reg fence_control;
+ wire bit_20;
+ wire [6:0] fence_opcode; 
+  
+  
+ /////////pipeline///////
+  //wires for IF_ID stage
+  wire [31:0] IF_ID_PC, IF_ID_Inst;
+  n_bit_reg #(64) IF_ID ({addr,fetched_inst_up},neg_clk,rst,~stall,{IF_ID_PC,IF_ID_Inst} );
+  
+  //wires for ID_EX
+  wire [31:0] ID_EX_PC, ID_EX_RegR1, ID_EX_RegR2, ID_EX_Imm;
+  wire [13:0] ID_EX_Ctrl;
+  wire [31:0] ID_EX_inst;
+  wire [4:0] ID_EX_Rs1, ID_EX_Rs2, ID_EX_Rd;
+  wire [3:0] ID_EX_ALU_OP;
+  n_bit_reg #(193) ID_EX 
+  ({Hazard_control,IF_ID_PC,read_data_first,read_data_second,gen_out,
+  IF_ID_Inst,read_reg_first,read_reg_second,write_reg,alu_ctr_out},clk,rst,1'b1,
+  {ID_EX_Ctrl,ID_EX_PC,ID_EX_RegR1,ID_EX_RegR2,ID_EX_Imm, ID_EX_inst,ID_EX_Rs1,ID_EX_Rs2,ID_EX_Rd,ID_EX_ALU_OP});
+  
+ 
+ 
+  
+  
+  //wires for EX_MEM
+ wire [31:0] EX_MEM_BranchAddOut, EX_MEM_ALU_out, EX_MEM_RegR2,EX_MEM_j_data,EX_MEM_auipc,EX_MEM_inst;
+  wire [13:0] EX_MEM_Ctrl;
+  wire [4:0] EX_MEM_Rd;
+  wire EX_MEM_Zero,EX_MEM_carry,EX_MEM_overflow,EX_MEM_sign;
+   n_bit_reg #(215) EX_MEM (
+   {ID_EX_Ctrl,target_address,zero_flag, carry_flag, overflow_flag, sign_flag,ALU_Output,forwardB_result,ID_EX_Rd,j_data,auipc_data,ID_EX_inst} ,neg_clk,rst,1'b1, 
+   {EX_MEM_Ctrl, EX_MEM_BranchAddOut, EX_MEM_Zero,EX_MEM_carry,EX_MEM_overflow,EX_MEM_sign,
+   EX_MEM_ALU_out, EX_MEM_RegR2, EX_MEM_Rd,EX_MEM_j_data,EX_MEM_auipc,EX_MEM_inst});
+  
+  //wires for MEM_WB
+ wire [31:0] MEM_WB_Mem_out, MEM_WB_ALU_out,MEM_WB_j_data,MEM_WB_auipc;
+  wire [13:0] MEM_WB_Ctrl;
+  wire [4:0] MEM_WB_Rd;
+   n_bit_reg #(147) MEM_WB ({EX_MEM_Ctrl,mem_data_out,EX_MEM_ALU_out,EX_MEM_Rd,EX_MEM_j_data,EX_MEM_auipc}, clk,rst,1'b1, {MEM_WB_Ctrl,MEM_WB_Mem_out, MEM_WB_ALU_out,
+    MEM_WB_Rd,MEM_WB_j_data,MEM_WB_auipc});
+
+ 
+ 
+   
+ 
+ 
+ 
+ wire [15:0] led_out={2'b00,Branch, MemRead ,MemtoReg, ALUOp, MemWrite,ALUSrc ,RegWrite, alu_ctr_out , zero_flag, and_out};
+ 
+ //pc reg
+n_bit_reg PC (Next_address, clk, rst, ~Halt, addr); 
+ 
+//InstMem instruction_memory ( addr[7:2], data_out);
+
+assign fence_opcode = mem_data_out[6:0];
+assign bit_20 = mem_data_out[20];
+    always@(*)
+        begin
+            case( fence_opcode)
+                7'b0001111: fence_control = 1'b1;
+                7'b1110011:
+                    case(bit_20)
+                       1'b0: fence_control = 1'b1;
+                       1'b1: fence_control = 1'b0;
+                       default: begin fence_control = 1'b0; end
+                       endcase
+                 default: begin fence_control = 1'b0; end
+               endcase
+        end
+
+
+
+n_bit_mux2x1 flush_mux (mem_data_out, 32'h00000033, and_out, fetched_inst);
+n_bit_mux2x1 fence_call (fetched_inst, 32'h00000033, fence_control, fetched_inst_up);
+
+
+//assign reg adresses based on the data outputted
+assign read_reg_first = IF_ID_Inst[19:15];
+assign read_reg_second = IF_ID_Inst[24:20];
+assign write_reg = IF_ID_Inst[11:7];
+assign control_signal= IF_ID_Inst[6:2];
+
+//assigning ALU input
+assign Inst_1 = IF_ID_Inst[`IR_funct3]; // example of how define works
+assign Inst_2 = IF_ID_Inst[30];
+
+control_unit CU (control_signal, auipc_signal,Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, RegWrite,Halt,Pc_mux,j_sel);
+
+ALU_contol_unit ALU_control_unit (ALUOp, Inst_1,Inst_2, alu_ctr_out ); //this has missing parts
+// n_bit_mux2x1 #(13) flush_exec (ID_EX_Ctrl, 13'b0000000000000, and_out, flush_control);
+
+// register file
+Register_File reg_file
+(read_reg_first, read_reg_second , MEM_WB_Rd,
+ write_data,MEM_WB_Ctrl[3],neg_clk, rst,read_data_first, read_data_second );
+// use immidiate provided instead of ours
+rv32_ImmGen ImmGen (IF_ID_Inst, gen_out); 
+
+assign flush_decode = and_out | stall;
+
+HazardDetUnit HazardUnit ( read_reg_first,read_reg_second,ID_EX_Rd, ID_EX_Ctrl[11],  stall);
+
+n_bit_mux2x1 #(14) Hazard_mux ({auipc_signal,Branch, MemRead, MemtoReg, ALUOp, MemWrite, ALUSrc, RegWrite,Halt,Pc_mux,j_sel},14'b00000000000000,flush_decode,Hazard_control);
+
+ Forwarding_Unit forwardUnit ( ID_EX_Rs1, ID_EX_Rs2, EX_MEM_Rd, MEM_WB_Rd, 
+    EX_MEM_Ctrl[3], MEM_WB_Ctrl[3], forwardA, forwardB);
+    
+ mux_4_1 forwardA_mux ( ID_EX_RegR1, write_data,EX_MEM_ALU_out,temp, forwardA,fowardA_result );
+ mux_4_1  forwardB_mux ( ID_EX_RegR2, write_data,EX_MEM_ALU_out,temp, forwardB,forwardB_result);
+
+
+
+ n_bit_mux2x1 ALU_mux (forwardB_result, ID_EX_Imm, ID_EX_Ctrl[4], ALU_second_input );
+ 
+ 
+ assign funct={IF_ID_Inst[30],IF_ID_Inst[`IR_funct3]};
+ assign shamt=IF_ID_Inst[`IR_rs2];      //i changed this
+ 
+ 
+ //RCA add_auipc_pc (ID_EX_PC ,gen_out, auipc_data, dum_1);
+ n_bit_mux2x1 auipc_sel (fowardA_result,ID_EX_PC,ID_EX_Ctrl[13],data_for_ex_mem);
+ 
+ prv32_ALU  alu_operation (data_for_ex_mem, ALU_second_input,ID_EX_Ctrl[4],shamt, ID_EX_ALU_OP,funct,ALU_Output, carry_flag, zero_flag, overflow_flag, sign_flag);
+ 
+ 
+n_bit_mux2x1 #(8) memory_access (addr[7:0],EX_MEM_ALU_out[7:0] , neg_clk,memory_address );
+ //func3 is not supported here
+single_memory single_memory ( 
+                      clk,  
+                      EX_MEM_Ctrl[11], 
+                      EX_MEM_inst[14:12],
+                      EX_MEM_Ctrl[5],
+                      memory_address,
+                      EX_MEM_RegR2,
+                      mem_data_out);
+
+assign j_data=addr_4;
+
+
+//writeback phase
+n_bit_mux2x1 r_load_mux (MEM_WB_ALU_out, MEM_WB_Mem_out, MEM_WB_Ctrl[9], write_temp_1 );
+n_bit_mux2x1 J_auipc_mux (MEM_WB_j_data, MEM_WB_ALU_out, MEM_WB_Ctrl[9], write_temp_2);                                                                                  
+n_bit_mux2x1 data_mem_mux (write_temp_1, write_temp_2, MEM_WB_Ctrl[10], write_data );
+
+//target address in case of BEQ
+// 
+//shift_left sh_L (, shifted_imm_address );
+RCA add_ShImm_PC (ID_EX_Imm , ID_EX_PC, target_address, Cout_target);
+
+
+//branch CU
+Branch_CU bcu(  zero_flag,carry_flag, overflow_flag, sign_flag, ID_EX_inst[`IR_funct3], branch_flag);
+//and gate
+assign and_out= ID_EX_Ctrl[12]&branch_flag;
+
+RCA add_Pc_4 (addr ,4, addr_4, Cout_4);
+
+assign jalr_address=EX_MEM_ALU_out;
+RCA add_jal_pc (addr ,gen_out, jal_address, dum);
+
+n_bit_mux2x1 pc4_branch_mux (addr_4,EX_MEM_BranchAddOut, and_out, mux_1_address);
+wire [31:0] mux_2_address;
+n_bit_mux2x1 jal_jalr_mux (jalr_address,jal_address,EX_MEM_Ctrl[0], mux_2_address);
+n_bit_mux2x1 target_address_mux (mux_1_address,mux_2_address, EX_MEM_Ctrl[1], Next_address);
+
+
+
+endmodule
